@@ -1,180 +1,337 @@
 # asset_patcher/modules/texture_ress_patch.py
 # 설명:
-# - Unity Texture2D의 m_StreamData를 기준으로 .resS 파일만 직접 패치합니다.
-# - .assets 파일은 변경하지 않습니다.
-# - 같은 이름 Texture가 여러 개 있을 수 있으므로 pathId 기준을 우선합니다.
+# UnityPy로 Texture2D 정보를 읽고 검증한 뒤, 실제 PNG 교체는 .resS 파일에 raw RGBA bytes를 직접 덮어쓴다.
+# 이 모듈은 container, object path, asset 구조를 변경하지 않는다.
+# 단, 현재 안전 버전은 "동일 크기 PNG"만 지원한다.
 
 from __future__ import annotations
 
-import shutil
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import UnityPy
-from PIL import Image, ImageOps
-from asset_patcher.core.backup import backup_files
+from PIL import Image
+
+from asset_patcher.core.atlas_manager import AtlasManager
+from asset_patcher.core.texture_metadata import TextureMetadata, TextureMetadataStore
+from asset_patcher.models.patch_request import PatchRequest
 
 
-def _get_attr(obj: Any, *names: str, default: Any = None) -> Any:
-    for name in names:
-        if hasattr(obj, name):
-            return getattr(obj, name)
-    return default
+@dataclass
+class TextureRessPatchResult:
+    """
+    Texture2D .resS 패치 결과를 표현한다.
+    """
+
+    status: str
+    texture_name: str
+    path_id: int
+    assets_file: str
+    ress_file: str
+    stream_offset: int
+    stream_size: int
+    png_size: tuple[int, int]
+    atlas_result: dict[str, Any] | None
 
 
-def run_texture_ress_patch(task: Dict[str, Any], options: Dict[str, Any]) -> Dict[str, Any]:
-    assets_path = Path(task["assetsFile"]).resolve()
+class TextureRessPatcher:
+    """
+    Texture2D .resS 직접 패처.
+    """
 
-    target = task.get("target", {})
-    source = task.get("source", {})
-    patch = task.get("patch", {})
+    def __init__(
+            self,
+            texture_metadata_store: TextureMetadataStore,
+            atlas_manager: AtlasManager | None = None,
+    ) -> None:
+        """
+        TextureRessPatcher를 초기화한다.
 
-    path_id = target.get("pathId")
-    texture_name = target.get("textureName")
-    png_path = Path(source["png"]).resolve()
+        Args:
+            texture_metadata_store: data.tsv 기반 Texture 메타 저장소
+            atlas_manager: atlas 누적 수정 매니저
+        """
 
-    output_dir = Path(options.get("outputDir") or assets_path.parent).resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
+        self.texture_metadata_store = texture_metadata_store
+        self.atlas_manager = atlas_manager or AtlasManager()
 
-    dry_run = bool(options.get("dryRun", False))
-    overwrite_original = bool(options.get("overwriteOriginal", False))
+    def patch(
+            self,
+            request: PatchRequest,
+            assets_file: str | Path,
+            png_file: str | Path,
+            atlas_file: str | Path | None = None,
+            flip_y: bool = False,
+            dry_run: bool = False,
+    ) -> TextureRessPatchResult:
+        """
+        단일 Texture2D를 .resS 직접 patch한다.
 
-    if not assets_path.exists():
-        raise FileNotFoundError(f"assetsFile not found: {assets_path}")
+        Args:
+            request: React/Electron에서 전달된 패치 요청
+            assets_file: Texture2D가 들어있는 .assets 파일
+            png_file: 교체할 PNG 파일
+            atlas_file: 필요 시 수정할 atlas txt 파일
+            flip_y: raw RGBA 변환 시 상하 반전 여부
+            dry_run: 실제 쓰기 없이 검증만 수행
 
-    if not png_path.exists():
-        raise FileNotFoundError(f"png not found: {png_path}")
+        Returns:
+            TextureRessPatchResult
 
-    env = UnityPy.load(str(assets_path))
+        Raises:
+            FileNotFoundError: assets/png/resS 파일이 없을 경우
+            ValueError: 메타 불일치, 포맷 불일치, 크기 불일치 등
+        """
 
-    target_data = None
-    target_obj = None
+        assets_file = Path(assets_file)
+        png_file = Path(png_file)
 
-    for obj in env.objects:
-        if obj.type.name != "Texture2D":
-            continue
+        # 입력 파일 존재 여부를 먼저 확인한다.
+        if not assets_file.exists():
+            raise FileNotFoundError(f".assets 파일이 없습니다: {assets_file}")
 
-        if path_id is not None and obj.path_id != int(path_id):
-            continue
+        if not png_file.exists():
+            raise FileNotFoundError(f"PNG 파일이 없습니다: {png_file}")
 
-        data = obj.read(check_read=False)
-        data_name = _get_attr(data, "name", "m_Name")
-
-        if path_id is not None or data_name == texture_name:
-            target_obj = obj
-            target_data = data
-            break
-
-    if target_data is None:
-        raise RuntimeError(
-            f"Texture2D not found. pathId={path_id}, textureName={texture_name}"
+        # data.tsv 기준으로 React 요청이 실제 등록된 대상인지 검증한다.
+        metadata = self.texture_metadata_store.find_exact(
+            category=request.category,
+            gender=request.option1,
+            clothes_type=request.option2,
+            texture_name=request.texture_name,
+            path_id=request.path_id,
+            size=request.size,
         )
 
-    data_name = _get_attr(target_data, "name", "m_Name")
-    width = int(target_data.m_Width)
-    height = int(target_data.m_Height)
-    texture_format = str(target_data.m_TextureFormat)
-
-    expected_width = target.get("expectedWidth")
-    expected_height = target.get("expectedHeight")
-
-    if expected_width is not None and width != int(expected_width):
-        raise RuntimeError(f"Width mismatch. actual={width}, expected={expected_width}")
-
-    if expected_height is not None and height != int(expected_height):
-        raise RuntimeError(f"Height mismatch. actual={height}, expected={expected_height}")
-
-    stream = target_data.m_StreamData
-    offset = int(_get_attr(stream, "offset", "Offset"))
-    size = int(_get_attr(stream, "size", "Size"))
-    stream_path = _get_attr(stream, "path", "Path", default="")
-
-    if not stream_path:
-        raise RuntimeError("Texture2D does not use external .resS stream data.")
-
-    img = Image.open(png_path).convert("RGBA")
-
-    if patch.get("requireSameSize", True) and img.size != (width, height):
-        raise RuntimeError(
-            f"PNG size mismatch. png={img.size}, texture={width}x{height}"
+        # PNG를 RGBA raw bytes로 변환한다.
+        png_size, raw_rgba = self._load_png_as_rgba_bytes(
+            png_file=png_file,
+            flip_y=flip_y,
         )
 
-    if patch.get("flipY", True):
-        img = ImageOps.flip(img)
-
-    raw = img.tobytes("raw", "RGBA")
-
-    if len(raw) != size:
-        raise RuntimeError(
-            f"Raw byte size mismatch. raw={len(raw)}, stream={size}. "
-            f"format={texture_format}"
-        )
-
-    ress_path = _resolve_ress_path(assets_path, stream_path, task.get("ressFile"))
-
-    if not ress_path.exists():
-        raise FileNotFoundError(f"resS file not found: {ress_path}")
-
-    if options.get("backup", True):
-        _backup_dir = options.get("backupDir")
-        game_id = options.get("_gameId", "unknown")
-        if _backup_dir:
-            backup_dir = Path(str(_backup_dir))
-            backup_files(
-                [assets_path, ress_path],
-                backup_dir=backup_dir,
-                game_id=game_id
+        # 1차 안전 버전에서는 원본 Texture size와 동일한 PNG만 허용한다.
+        # PNG 크기가 달라지면 Texture2D width/height 또는 stream size 수정이 필요할 수 있다.
+        if png_size != metadata.size:
+            raise ValueError(
+                "현재 texture_ress_patch 안전 모드는 동일 크기 PNG만 지원합니다. "
+                f"metadata_size={metadata.size}, png_size={png_size}, "
+                "크기 변경 패치는 UnityPy 최소 수정 모드로 분리해야 합니다."
             )
-    if dry_run:
+
+        # UnityPy로 Texture2D 객체와 stream 정보를 읽는다.
+        texture_info = self._read_texture_stream_info(
+            assets_file=assets_file,
+            metadata=metadata,
+        )
+
+        stream_size = texture_info["stream_size"]
+
+        # RGBA32 기준 byte size가 stream size와 정확히 일치해야 안전하게 덮어쓸 수 있다.
+        if len(raw_rgba) != stream_size:
+            raise ValueError(
+                "PNG raw RGBA byte 크기와 Texture2D stream size가 다릅니다. "
+                f"raw_size={len(raw_rgba)}, stream_size={stream_size}"
+            )
+
+        ress_file = self._resolve_ress_path(
+            assets_file=assets_file,
+            stream_path=texture_info["stream_path"],
+        )
+
+        if not ress_file.exists():
+            raise FileNotFoundError(f".resS 파일이 없습니다: {ress_file}")
+
+        atlas_result = None
+
+        # atlas 파일이 있고 metadata에도 atlas가 있으면 atlas 검증/수정을 수행한다.
+        # 동일 크기 PNG라면 atlas_manager 내부에서 changed=False가 반환된다.
+        if atlas_file is not None and metadata.atlas_name is not None:
+            atlas_result = self.atlas_manager.update_page_for_png(
+                atlas_path=atlas_file,
+                texture_name=metadata.atlas_page_name,
+                png_path=png_file,
+            )
+
+        # dryRun이면 여기서 실제 파일 쓰기는 하지 않는다.
+        if not dry_run:
+            self._write_ress_bytes(
+                ress_file=ress_file,
+                offset=texture_info["stream_offset"],
+                data=raw_rgba,
+            )
+
+        return TextureRessPatchResult(
+            status="dry_run" if dry_run else "success",
+            texture_name=metadata.texture_name,
+            path_id=metadata.path_id,
+            assets_file=str(assets_file),
+            ress_file=str(ress_file),
+            stream_offset=texture_info["stream_offset"],
+            stream_size=stream_size,
+            png_size=png_size,
+            atlas_result=atlas_result,
+        )
+
+    def save_atlas_all(self) -> None:
+        """
+        누적된 atlas 변경 사항을 저장한다.
+        """
+
+        self.atlas_manager.save_all()
+
+    def _read_texture_stream_info(
+            self,
+            assets_file: Path,
+            metadata: TextureMetadata,
+    ) -> dict[str, Any]:
+        """
+        UnityPy로 Texture2D 객체를 읽고, PathID/name/size/format/stream 정보를 검증한다.
+
+        Args:
+            assets_file: .assets 파일
+            metadata: data.tsv에서 찾은 Texture 메타
+
+        Returns:
+            stream 정보 dict
+
+        Raises:
+            ValueError: Texture2D를 찾지 못했거나 메타가 불일치하는 경우
+        """
+
+        env = UnityPy.load(str(assets_file))
+
+        target_obj = None
+
+        # PathID 기준으로 Texture2D 객체를 찾는다.
+        for obj in env.objects:
+            if getattr(obj, "path_id", None) == metadata.path_id:
+                target_obj = obj
+                break
+
+        if target_obj is None:
+            raise ValueError(f"Texture2D PathID를 찾지 못했습니다: {metadata.path_id}")
+
+        data = target_obj.read()
+
+        # Texture2D name 검증.
+        unity_name = getattr(data, "m_Name", None) or getattr(data, "name", None)
+
+        if unity_name != metadata.texture_name:
+            raise ValueError(
+                f"Texture name 불일치: expected={metadata.texture_name}, actual={unity_name}"
+            )
+
+        # Texture2D width/height 검증.
+        width = int(getattr(data, "m_Width"))
+        height = int(getattr(data, "m_Height"))
+
+        if (width, height) != metadata.size:
+            raise ValueError(
+                f"Texture size 불일치: expected={metadata.size}, actual={(width, height)}"
+            )
+
+        # Texture format 검증.
+        texture_format = str(getattr(data, "m_TextureFormat", ""))
+
+        if "RGBA32" not in texture_format and metadata.texture_format != "RGBA32":
+            raise ValueError(
+                f"Texture format 불일치 또는 미지원: unity={texture_format}, metadata={metadata.texture_format}"
+            )
+
+        stream_data = getattr(data, "m_StreamData", None)
+
+        if stream_data is None:
+            raise ValueError(f"m_StreamData가 없습니다: pathID={metadata.path_id}")
+
+        stream_path = getattr(stream_data, "path", None)
+        stream_offset = int(getattr(stream_data, "offset"))
+        stream_size = int(getattr(stream_data, "size"))
+
+        if not stream_path:
+            raise ValueError(f"m_StreamData.path가 비어 있습니다: pathID={metadata.path_id}")
+
         return {
-            "taskId": task["id"],
-            "status": "dry_run",
-            "textureName": data_name,
-            "pathId": target_obj.path_id if target_obj else path_id,
-            "size": f"{width}x{height}",
-            "streamOffset": offset,
-            "streamSize": size,
-            "ressFile": str(ress_path)
+            "stream_path": stream_path,
+            "stream_offset": stream_offset,
+            "stream_size": stream_size,
         }
 
-    if overwrite_original:
-        out_assets = assets_path
-        out_ress = ress_path
-    else:
-        out_assets = output_dir / assets_path.name
-        out_ress = output_dir / ress_path.name
-        shutil.copy2(assets_path, out_assets)
-        shutil.copy2(ress_path, out_ress)
+    def _resolve_ress_path(self, assets_file: Path, stream_path: str) -> Path:
+        """
+        Unity Texture2D m_StreamData.path 값을 실제 .resS 파일 경로로 해석한다.
 
-    with out_ress.open("r+b") as f:
-        f.seek(offset)
-        f.write(raw)
+        Args:
+            assets_file: .assets 파일 경로
+            stream_path: Unity m_StreamData.path
 
-    return {
-        "taskId": task["id"],
-        "status": "success",
-        "textureName": data_name,
-        "pathId": target_obj.path_id if target_obj else path_id,
-        "size": f"{width}x{height}",
-        "format": texture_format,
-        "assetsFile": str(out_assets),
-        "ressFile": str(out_ress)
-    }
+        Returns:
+            실제 .resS 파일 경로
+        """
 
+        normalized = stream_path.replace("\\", "/")
+        filename = Path(normalized).name
 
-def _resolve_ress_path(
-        assets_path: Path,
-        stream_path: str,
-        explicit_ress_file: Optional[str]
-) -> Path:
-    if explicit_ress_file:
-        return Path(explicit_ress_file).resolve()
+        # 대부분의 Unity .resS는 .assets 파일과 같은 폴더에 있다.
+        candidate = assets_file.parent / filename
 
-    stream_name = Path(str(stream_path).replace("\\", "/")).name
-
-    if stream_name:
-        candidate = assets_path.with_name(stream_name)
         if candidate.exists():
             return candidate
 
-    return assets_path.with_name(assets_path.name + ".resS")
+        # stream_path가 상대 경로인 경우도 고려한다.
+        relative_candidate = assets_file.parent / normalized
+
+        if relative_candidate.exists():
+            return relative_candidate
+
+        # 존재 여부는 호출부에서 FileNotFoundError로 처리한다.
+        return candidate
+
+    def _load_png_as_rgba_bytes(
+            self,
+            png_file: Path,
+            flip_y: bool,
+    ) -> tuple[tuple[int, int], bytes]:
+        """
+        PNG를 RGBA32 raw bytes로 변환한다.
+
+        Args:
+            png_file: PNG 파일
+            flip_y: 상하 반전 여부
+
+        Returns:
+            ((width, height), raw_rgba_bytes)
+        """
+
+        with Image.open(png_file) as img:
+            rgba = img.convert("RGBA")
+
+            if flip_y:
+                rgba = rgba.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+
+            size = rgba.size
+            raw = rgba.tobytes()
+
+        return size, raw
+
+    def _write_ress_bytes(
+            self,
+            ress_file: Path,
+            offset: int,
+            data: bytes,
+    ) -> None:
+        """
+        .resS 파일의 지정 offset에 raw bytes를 덮어쓴다.
+
+        Args:
+            ress_file: .resS 파일
+            offset: stream offset
+            data: raw RGBA bytes
+
+        Side Effects:
+            ress_file의 일부 byte를 직접 변경한다.
+        """
+
+        with ress_file.open("r+b") as f:
+            f.seek(offset)
+            f.write(data)

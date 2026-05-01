@@ -64,13 +64,13 @@ class TextureMetadataStore:
         self._loaded = True
 
     def find_exact(
-        self,
-        category: str,
-        gender: str,
-        clothes_type: str,
-        texture_name: str,
-        path_id: int,
-        size: tuple[int, int],
+            self,
+            category: str,
+            gender: str,
+            clothes_type: str,
+            texture_name: str,
+            path_id: int,
+            size: tuple[int, int],
     ) -> TextureMetadata:
         self.load()
 
@@ -78,11 +78,11 @@ class TextureMetadataStore:
             item
             for item in self._items
             if item.category == category
-            and item.gender == gender
-            and item.clothes_type == clothes_type
-            and item.texture_name == texture_name
-            and item.path_id == path_id
-            and item.size == size
+               and item.gender == gender
+               and item.clothes_type == clothes_type
+               and item.texture_name == texture_name
+               and item.path_id == path_id
+               and item.size == size
         ]
 
         if len(matches) != 1:
