@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "1.0",
+  "planName": "LYZZ texture patch test",
+  "game": {
+    "id": "LongYinLiZhiZhuan",
+    "name": "용윤입지전",
+    "rootDir": "D:/Games/SteamLibrary/steamapps/common/LongYinLiZhiZhuan",
+    "dataDir": "D:/Games/SteamLibrary/steamapps/common/LongYinLiZhiZhuan/LongYinLiZhiZhuan_Data"
+  },
+  "options": {
+    "dryRun": false,
+    "backup": true,
+    "backupDir": "D:/Games/Outputs/backups",
+    "outputDir": "D:/Games/Outputs/patched",
+    "overwriteOriginal": false,
+    "stopOnError": true,
+    "writeReport": true
+  },
+  "tasks": [
+    {
+      "id": "replace_skeleton_17_female",
+      "enabled": true,
+      "type": "texture_ress_patch",
+      "description": "PathID 기준 skeleton_17 교체",
+      "assetsFile": "D:/Games/SteamLibrary/steamapps/common/LongYinLiZhiZhuan/LongYinLiZhiZhuan_Data/sharedassets1.assets",
+      "ressFile": "D:/Games/SteamLibrary/steamapps/common/LongYinLiZhiZhuan/LongYinLiZhiZhuan_Data/sharedassets1.assets.resS",
+      "target": {
+        "pathId": 123456,
+        "textureName": "skeleton_17",
+        "expectedWidth": 1763,
+        "expectedHeight": 1050,
+        "expectedFormat": "RGBA32"
+      },
+      "source": {
+        "png": "D:/Games/Outputs/skeleton_17.png"
+      },
+      "patch": {
+        "flipY": true,
+        "requireSameSize": true,
+        "patchRessOnly": true
+      }
+    }
+  ]
+}

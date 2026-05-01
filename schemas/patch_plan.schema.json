@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AssetManager UnityPy Patch Plan",
+  "type": "object",
+  "required": ["schemaVersion", "game", "options", "tasks"],
+  "properties": {
+    "schemaVersion": { "type": "string" },
+    "planName": { "type": "string" },
+    "game": {
+      "type": "object",
+      "required": ["id", "rootDir", "dataDir"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "rootDir": { "type": "string" },
+        "dataDir": { "type": "string" }
+      }
+    },
+    "options": {
+      "type": "object",
+      "properties": {
+        "dryRun": { "type": "boolean", "default": false },
+        "backup": { "type": "boolean", "default": true },
+        "backupDir": { "type": "string" },
+        "outputDir": { "type": "string" },
+        "overwriteOriginal": { "type": "boolean", "default": false },
+        "stopOnError": { "type": "boolean", "default": true },
+        "writeReport": { "type": "boolean", "default": true }
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "enabled", "type"],
+        "properties": {
+          "id": { "type": "string" },
+          "enabled": { "type": "boolean" },
+          "type": {
+            "type": "string",
+            "enum": [
+              "texture_ress_patch",
+              "atlas_text_patch",
+              "font_patch",
+              "file_copy_patch",
+              "assetbundle_patch"
+            ]
+          },
+          "description": { "type": "string" },
+          "assetsFile": { "type": "string" },
+          "ressFile": { "type": "string" },
+          "target": { "type": "object" },
+          "source": { "type": "object" },
+          "patch": { "type": "object" }
+        }
+      }
+    }
+  }
+}
