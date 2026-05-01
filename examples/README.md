@@ -34,3 +34,37 @@ python -m asset_patcher.cli --plan ".\examples\patch_plan.example.json"
 
 `textureName`은 검증용입니다.
 동명이 Texture2D가 있을 수 있으니 실제 타깃 식별자는 **PathID**입니다.
+
+### Batch Patch
+```PowerShell
+python -m asset_patcher.cli `
+  --plan .\examples\patch_plan.clothes.example.json `
+  --report .\reports\patch_report.json
+```
+
+### Font Patch
+```Python
+from asset_patcher.core.font_metadata import FontMetadataStore
+from asset_patcher.core.original_store import OriginalStore
+from asset_patcher.modules.font_patch import FontPatcher
+
+patcher = FontPatcher(
+    font_metadata_store=FontMetadataStore("metadata/fonts_data.tsv"),
+    original_store=OriginalStore("originals"),
+)
+
+# 첫 실행 시 원본 폰트 전체 추출
+patcher.extract_originals(
+    game_id="LongYinLiZhiZhuan",
+    assets_file="D:/Games/.../LongYinLiZhiZhuan_Data/resources.assets",
+)
+
+# 특정 폰트 교체
+result = patcher.patch_by_name(
+    game_id="LongYinLiZhiZhuan",
+    font_name="Arial",
+    assets_file="D:/Games/.../LongYinLiZhiZhuan_Data/resources.assets",
+    replacement_font_file="D:/Mods/fonts/MyFont.ttf",
+    dry_run=False,
+)
+```
