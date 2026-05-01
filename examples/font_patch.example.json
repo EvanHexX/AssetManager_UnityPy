@@ -1,0 +1,16 @@
+{
+  "kind": "font",
+  "game_id": "LongYinLiZhiZhuan",
+  "dry_run": true,
+  "stop_on_error": true,
+  "font_metadata_path": "../metadata/fonts_data.tsv",
+  "originals_dir": "../originals",
+  "assets_file": "D:/Games/SteamLibrary/steamapps/common/LongYinLiZhiZhuan/LongYinLiZhiZhuan_Data/resources.assets",
+  "output_file": null,
+  "jobs": [
+    {
+      "path_id": 2418,
+      "replacement_font_file": "D:/Mods/LongYinLiZhiZhuan/fonts/MyKoreanFont.ttf"
+    }
+  ]
+}

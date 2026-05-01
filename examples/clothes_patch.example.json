@@ -1,0 +1,24 @@
+{
+  "kind": "clothes",
+  "dry_run": true,
+  "stop_on_error": true,
+  "texture_metadata_path": "../metadata/data.tsv",
+  "jobs": [
+    {
+      "request": {
+        "game_id": "LongYinLiZhiZhuan",
+        "category": "clothes",
+        "option1": "female",
+        "option2": "type_01",
+        "texture_name": "skeleton_17",
+        "pathID": 123456,
+        "size": [1763, 1050]
+      },
+      "assets_file": "D:/Games/SteamLibrary/steamapps/common/LongYinLiZhiZhuan/LongYinLiZhiZhuan_Data/sharedassets1.assets",
+      "png_file": "D:/Mods/LongYinLiZhiZhuan/clothes/female/type_01/skeleton_17.png",
+      "atlas_file": "D:/Games/SteamLibrary/steamapps/common/LongYinLiZhiZhuan/LongYinLiZhiZhuan_Data/skeleton.atlas.txt",
+      "output_assets_file": null,
+      "flip_y": false
+    }
+  ]
+}

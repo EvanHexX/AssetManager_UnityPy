@@ -1,248 +1,313 @@
 # AssetManager_UnityPy
 
-Unity 기반 게임의 `.assets / .resS / AssetBundle` 리소스를  
-**안전하게 패치하기 위한 Python 기반 도구**
+Unity 기반 게임의 Texture2D, Spine atlas, Font 리소스를 안전하게 교체하기 위한 Python 패치 도구입니다.
 
----
+## 목표
 
-# 🎯 목적
+- 의상 PNG 교체
+- atlas txt 자동 보정
+- resources.assets 내부 Font 교체
+- React/Electron 앱에서 JSON plan을 전달해 실행
+- 추후 Nuitka exe 빌드 지원
 
-- Unity Texture2D (특히 `.resS` 구조) 안전 교체
-- Spine atlas 기반 이미지 교체 지원
-- font / atlas / texture 통합 패치 시스템 구축
-- Electron 앱과 연동 가능한 CLI/EXE 제공
+## 핵심 원칙
 
----
+### Texture / PNG
 
-# 🚨 핵심 특징
+- Texture2D 식별은 `PathID` 기준
+- `texture_name`은 검증용
+- 동일 크기 PNG는 `.resS` 직접 patch
+- 크기가 다른 PNG는 UnityPy 최소 수정 patch
+- atlas가 있는 경우 `size`, `bounds`, `offsets` 자동 배율 보정
+- atlas 원본은 `.original` 파일로 최초 1회 보존
 
-## 1. `.resS` 구조 안전 패치
+### Font
 
-Unity 대형 텍스처는 다음 구조를 사용:
+- `resources.assets` 내부 Font 객체 수정
+- 대상은 `fonts_data.tsv`의 `PathID` 기준
+- Arial도 TSV에 있으면 교체 대상
+- 제외하려면 TSV에서 행 삭제
+- 첫 실행 시 원본 Font data를 `originals/{game_id}/fonts`에 보관
 
-```
+## 현재 구조
 
-sharedassets1.assets      → 메타데이터
-sharedassets1.assets.resS → 실제 이미지 데이터
-
-```
-
-일반적인 툴(UABEA 등)은:
-
-```
-
-resS → assets 내부로 이동
-→ 파일 크기 증가
-→ 크래시 발생
-
-```
-
-❗ 본 프로젝트는 `.assets`를 변경하지 않고  
-`.resS`만 직접 수정하여 안정성을 확보
-
----
-
-## 2. PathID 기반 패치
-
-Unity에서는 동일 이름 Texture가 여러 개 존재할 수 있음
-
-```
-
-skeleton_17 (남자)
-skeleton_17 (여자)
-
-```
-
-👉 해결:
-
-```
-
-Texture 이름 ❌
-PathID ✔
-
-```
-
----
-
-## 3. 모듈 기반 구조
-
-```
-
-texture_patch   → Texture2D 교체
-atlas_patch     → atlas 텍스트 수정
-font_patch      → 폰트 교체
-bundle_patch    → AssetBundle 처리 (예정)
-
-```
-
----
-
-# 📂 프로젝트 구조
-
-```
+```text
 AssetManager_UnityPy/
 ├─ asset_patcher/
-│  ├─ __init__.py
 │  ├─ cli.py
-│  ├─ plan_loader.py
+│  ├─ models/
+│  │  └─ patch_request.py
 │  ├─ core/
-│  ├─ ├─ __init__.py
-│  ├─ └─ backup.py
-│  └─ modules/
-│     ├─ __init__.py
-│     ├─ texture_ress_patch.py
-│     ├─ atlas_patch.py
-│     ├─ font_patch.py
-│     └─ bundle_patch.py
-├─ schemas/
-│  └─ patch_plan.schema.json
+│  │  ├─ atlas_manager.py
+│  │  ├─ font_metadata.py
+│  │  ├─ game_metadata.py
+│  │  ├─ original_store.py
+│  │  └─ texture_metadata.py
+│  ├─ modules/
+│  │  ├─ font_patch.py
+│  │  ├─ texture_ress_patch.py
+│  │  └─ texture_unitypy_patch.py
+│  └─ services/
+│     ├─ clothes_batch_service.py
+│     └─ clothes_patch_service.py
+├─ metadata/
+│  ├─ data.tsv
+│  └─ fonts_data.tsv
 ├─ examples/
-│  └─ patch_plan.example.json
-├─ tests/
-├─ build/
-├─ requirements.txt
+│  ├─ clothes_patch.example.json
+│  ├─ font_extract.example.json
+│  ├─ font_patch.example.json
+│  └─ font_restore.example.json
+├─ originals/
+├─ reports/
 └─ README.md
-
 ````
 
----
-
-# 🚀 설치
+## 설치
 
 ```bash
-pip install UnityPy pillow
-````
+pip install UnityPy Pillow
+```
 
----
-
-# 🔧 기본 사용 (Texture 교체)
+## 실행 방식
 
 ```bash
-python patch_texture_ress.py \
-  --assets "sharedassets1.assets" \
-  --path-id 123456 \
-  --png "skeleton_17.png" \
-  --out "./output"
+python -m asset_patcher.cli --plan ./examples/clothes_patch.example.json --report ./reports/report.json
 ```
 
----
+## Plan 종류
 
-# ⚠️ 주의사항
-
-## 1. 해상도 반드시 동일
-
-```
-원본: 1763 x 1050
-→ 교체도 동일해야 함
+```text
+kind=clothes       의상 PNG 패치
+kind=font_extract  원본 폰트 추출
+kind=font          폰트 교체
+kind=font_restore  원본 폰트 복원
 ```
 
-❌ 변경 시:
+## Clothes patch plan
 
-* UV 깨짐
-* 파츠 위치 오류
+```json
+{
+  "kind": "clothes",
+  "dry_run": true,
+  "stop_on_error": true,
+  "texture_metadata_path": "../metadata/data.tsv",
+  "jobs": [
+    {
+      "request": {
+        "game_id": "LongYinLiZhiZhuan",
+        "category": "clothes",
+        "option1": "female",
+        "option2": "type_01",
+        "texture_name": "skeleton_17",
+        "pathID": 123456,
+        "size": [1763, 1050]
+      },
+      "assets_file": "D:/Games/.../sharedassets1.assets",
+      "png_file": "D:/Mods/.../skeleton_17.png",
+      "atlas_file": "D:/Games/.../skeleton.atlas.txt",
+      "output_assets_file": null,
+      "flip_y": false
+    }
+  ]
+}
+```
 
----
+## Font extract plan
 
-## 2. RGBA 유지
+```json
+{
+  "kind": "font_extract",
+  "game_id": "LongYinLiZhiZhuan",
+  "font_metadata_path": "../metadata/fonts_data.tsv",
+  "originals_dir": "../originals",
+  "assets_file": "D:/Games/.../resources.assets",
+  "overwrite": false
+}
+```
 
-* PNG는 반드시 RGBA (알파 포함)
-* 투명도 깨지면 캐릭터 손상
+## Font patch plan
 
----
+```json
+{
+  "kind": "font",
+  "game_id": "LongYinLiZhiZhuan",
+  "dry_run": true,
+  "stop_on_error": true,
+  "font_metadata_path": "../metadata/fonts_data.tsv",
+  "originals_dir": "../originals",
+  "assets_file": "D:/Games/.../resources.assets",
+  "output_file": null,
+  "jobs": [
+    {
+      "path_id": 2418,
+      "replacement_font_file": "D:/Mods/fonts/MyKoreanFont.ttf"
+    }
+  ]
+}
+```
 
-## 3. `.assets` 파일 직접 수정 금지
+## Font restore plan
 
-👉 반드시 `.resS`만 수정
+```json
+{
+  "kind": "font_restore",
+  "game_id": "LongYinLiZhiZhuan",
+  "dry_run": true,
+  "stop_on_error": true,
+  "font_metadata_path": "../metadata/fonts_data.tsv",
+  "originals_dir": "../originals",
+  "assets_file": "D:/Games/.../resources.assets",
+  "output_file": null,
+  "jobs": [
+    {
+      "path_id": 2418
+    }
+  ]
+}
+```
 
----
+## Texture patch 동작
 
-# 🧠 내부 동작 원리
+### PNG 크기가 원본과 같을 때
 
-1. UnityPy로 Texture2D 메타데이터 읽기
-2. `m_StreamData`에서:
+```text
+UnityPy로 Texture2D 정보 조회
+→ PathID/name/size/format 검증
+→ m_StreamData offset/size/path 확인
+→ PNG를 RGBA32 raw bytes로 변환
+→ .resS offset 위치에 직접 덮어쓰기
+```
 
-   * offset
-   * size
-   * path (.resS)
-     확인
-3. `.resS` 파일 직접 seek → overwrite
+이 방식은 `.assets` 구조를 변경하지 않습니다.
 
----
+### PNG 크기가 원본과 다를 때
 
-# 📦 향후 기능
+```text
+UnityPy로 Texture2D image data 교체
+→ PathID/name/container snapshot 검증
+→ atlas txt size/bounds/offsets 배율 수정
+→ .assets 저장
+```
 
-* [ ] atlas 자동 수정 (좌표 scaling)
-* [ ] 고해상도 atlas 재구성
-* [ ] font 자동 교체 (TMP 포함)
-* [ ] AssetBundle 패치 지원
-* [ ] GUI (Electron 연동)
-* [ ] 패치 프로파일 관리
-* [ ] 자동 백업 / 롤백 시스템
+이 방식은 실제 게임 테스트가 필요합니다.
 
----
+## Atlas patch 동작
 
-# 🔗 Electron 연동
+지원 atlas 형식:
 
-CLI 기반 JSON 작업 처리 예정
+```text
+skeleton.png
+size:2487,1081
+filter:Linear,Linear
+pma:true
+scale:0.88
+-100/右臂
+bounds:1879,627,126,452
+offsets:0,0,126,455
+rotate:90
+```
+
+수정 대상:
+
+```text
+size    → page 크기
+bounds  → x,y,w,h 전체 배율 수정
+offsets → x,y,w,h 전체 배율 수정
+```
+
+수정하지 않는 대상:
+
+```text
+rotate
+filter
+pma
+scale
+```
+
+## Metadata
+
+### data.tsv
+
+의상 Texture2D 기준 데이터입니다.
+
+필수 컬럼:
+
+```text
+category
+gender
+type
+texture_name
+pathID
+size
+atlas_name
+atlas_pathID
+format
+```
+
+React 요청의 `category=clothes`는 TSV의 `category=Outfit`으로 매핑됩니다.
+
+### fonts_data.tsv
+
+Font 기준 데이터입니다.
+
+필수 컬럼:
+
+```text
+Name
+Description
+Type
+PathID
+Source
+```
+
+Font 이름이 중복될 수 있으므로 실사용에서는 `path_id` 기준 patch를 권장합니다.
+
+## 안전장치
+
+* PathID 기준 검증
+* Texture name 검증
+* Texture size 검증
+* RGBA32 format 검증
+* `.resS` stream size 검증
+* UnityPy 저장 전후 container snapshot 검증
+* atlas 원본 `.original` 최초 1회 보존
+* font 원본 data 최초 1회 보존
+* `dry_run` 지원
+
+## 권장 테스트 순서
+
+### 1. Font 원본 추출
 
 ```bash
-AssetManager_UnityPy.exe --job job.json
+python -m asset_patcher.cli --plan ./examples/font_extract.example.json
 ```
 
----
+### 2. 의상 dry run
 
-# 🧪 테스트 상태
-
-| 기능                | 상태     |
-| ----------------- | ------ |
-| Texture2D resS 패치 | ✅ 완료   |
-| PathID 분기         | ✅ 완료   |
-| atlas patch       | 🔄 진행중 |
-| font patch        | ⏳ 예정   |
-| EXE 빌드            | ⏳ 예정   |
-
----
-
-# 💬 개발 방향
-
-이 프로젝트는 단순 스크립트가 아니라:
-
-```
-Unity Asset Patch Framework
+```bash
+python -m asset_patcher.cli --plan ./examples/clothes_patch.example.json
 ```
 
-를 목표로 합니다.
+### 3. 동일 크기 PNG 1개 실제 patch
 
----
-
-# 🧠 핵심 철학
-
-```
-파일을 바꾸지 않는다
-→ 메모리 구조를 이해한다
-→ 필요한 부분만 정확히 수정한다
+```json
+"dry_run": false
 ```
 
----
+### 4. 게임 실행 테스트
 
-# 📌 타겟 게임
+### 5. 크기 변경 PNG patch 테스트
 
-* LongYinLiZhiZhuan (용윤입지전)
-* Unity 기반 게임 전반 확장 가능
+### 6. Font patch 테스트
 
----
+## 주의사항
 
-# 🛠️ 라이선스
+* 동일 크기 PNG는 `.resS` 직접 patch가 우선입니다.
+* 크기 변경 PNG는 UnityPy 저장이 필요하므로 반드시 테스트해야 합니다.
+* Font patch는 `resources.assets`를 수정하므로 원본 font 추출 후 진행해야 합니다.
+* 여러 atlas page를 한 번에 바꿀 때는 batch plan을 사용해야 atlas 변경이 누적됩니다.
 
-개인 사용 및 연구 목적
-
----
-
-# 🙏 참고
-
-* UnityPy
-* UABEA
-* AssetStudio
 
 ---
 해당 README.md 파일은 llm을 통해 작성했습니다.

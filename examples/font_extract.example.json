@@ -1,0 +1,8 @@
+{
+  "kind": "font_extract",
+  "game_id": "LongYinLiZhiZhuan",
+  "font_metadata_path": "../metadata/fonts_data.tsv",
+  "originals_dir": "../originals",
+  "assets_file": "D:/Games/SteamLibrary/steamapps/common/LongYinLiZhiZhuan/LongYinLiZhiZhuan_Data/resources.assets",
+  "overwrite": false
+}

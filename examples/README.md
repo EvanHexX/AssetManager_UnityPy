@@ -68,3 +68,31 @@ result = patcher.patch_by_name(
     dry_run=False,
 )
 ```
+
+
+## 실행 예시
+
+#### 어셋패치
+```PowerShell
+python -m asset_patcher.cli `
+  --plan .\examples\clothes_patch.example.json `
+  --report .\reports\clothes_patch_report.json
+```
+#### 폰트추출
+```PowerShell
+python -m asset_patcher.cli `
+  --plan .\examples\font_extract.example.json `
+  --report .\reports\font_extract_report.json
+```
+#### 폰트패치
+```PowerShell
+python -m asset_patcher.cli `
+  --plan .\examples\font_patch.example.json `
+  --report .\reports\font_patch_report.json
+```
+#### 폰트복원
+```PowerShell
+python -m asset_patcher.cli `
+  --plan .\examples\font_restore.example.json `
+  --report .\reports\font_restore_report.json
+```
