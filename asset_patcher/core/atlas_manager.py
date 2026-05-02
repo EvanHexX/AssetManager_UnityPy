@@ -84,6 +84,27 @@ class AtlasDocument:
         )
         self.dirty = False
 
+    def get_page_size(self, texture_name: str) -> tuple[int, int]:
+        """
+        atlas 문서에서 texture_name page의 현재 size를 반환한다.
+
+        Args:
+            texture_name: atlas page 이름. 예: skeleton_17.png
+
+        Returns:
+            (width, height)
+
+        Raises:
+            ValueError: page를 찾지 못한 경우
+        """
+
+        page = self.find_page(texture_name)
+
+        if page is None:
+            raise ValueError(f"atlas에서 page를 찾지 못했습니다: {texture_name}")
+
+        return page.size
+
     def backup_original_once(self) -> Path:
         """
         원본 atlas txt 백업을 최초 1회만 생성한다.
@@ -375,6 +396,25 @@ class AtlasDocument:
 
         return [int(value) for value in re.findall(r"-?\d+", value_part)]
 
+    @classmethod
+    def from_text(cls, text: str, virtual_path: str = "<memory_atlas>") -> "AtlasDocument":
+        """
+        파일이 아니라 문자열 atlas 내용을 기반으로 AtlasDocument를 생성한다.
+        TextAsset 내부 atlas 수정에 사용한다.
+        """
+
+        document = cls(virtual_path)
+        document.lines = text.splitlines()
+        document.dirty = False
+        return document
+
+    def to_text(self) -> str:
+        """
+        현재 atlas 문서를 문자열로 직렬화한다.
+        """
+
+        return "\n".join(self.lines) + "\n"
+
 
 class AtlasManager:
     """
@@ -407,6 +447,32 @@ class AtlasManager:
             self._documents[path] = document
 
         return self._documents[path]
+
+    def parse_text(self, text: str) -> AtlasDocument:
+        """
+        atlas 문자열을 AtlasDocument로 파싱한다.
+        """
+
+        return AtlasDocument.from_text(text)
+
+    def get_page_size(
+            self,
+            atlas_path: str | Path,
+            texture_name: str,
+    ) -> tuple[int, int]:
+        """
+        atlas_path에 해당하는 문서를 가져와 texture_name page의 현재 size를 반환한다.
+
+        Args:
+            atlas_path: atlas txt 파일 경로
+            texture_name: atlas page 이름
+
+        Returns:
+            (width, height)
+        """
+
+        document = self.get_document(atlas_path)
+        return document.get_page_size(texture_name)
 
     def update_page_for_png(
             self,

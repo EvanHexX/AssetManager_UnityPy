@@ -16,6 +16,7 @@ from PIL import Image
 from asset_patcher.core.atlas_manager import AtlasManager
 from asset_patcher.core.texture_metadata import TextureMetadata, TextureMetadataStore
 from asset_patcher.models.patch_request import PatchRequest
+from asset_patcher.core.original_store import OriginalStore
 
 
 @dataclass
@@ -44,6 +45,7 @@ class TextureRessPatcher:
             self,
             texture_metadata_store: TextureMetadataStore,
             atlas_manager: AtlasManager | None = None,
+            original_store: OriginalStore | None = None,
     ) -> None:
         """
         TextureRessPatcher를 초기화한다.
@@ -55,6 +57,7 @@ class TextureRessPatcher:
 
         self.texture_metadata_store = texture_metadata_store
         self.atlas_manager = atlas_manager or AtlasManager()
+        self.original_store = original_store
 
     def patch(
             self,
@@ -62,7 +65,7 @@ class TextureRessPatcher:
             assets_file: str | Path,
             png_file: str | Path,
             atlas_file: str | Path | None = None,
-            flip_y: bool = False,
+            flip_y: bool = True,
             dry_run: bool = False,
     ) -> TextureRessPatchResult:
         """
@@ -153,8 +156,30 @@ class TextureRessPatcher:
                 png_path=png_file,
             )
 
-        # dryRun이면 여기서 실제 파일 쓰기는 하지 않는다.
+        # dryRun이면 실제 파일 쓰기와 원본 raw 저장을 하지 않는다.
         if not dry_run:
+            # 패치 직전, 현재 .resS에 들어있는 원본 raw bytes를 최초 1회만 저장한다.
+            if self.original_store is not None:
+                original_raw = self._read_ress_bytes(
+                    ress_file=ress_file,
+                    offset=texture_info["stream_offset"],
+                    size=stream_size,
+                )
+
+                if len(original_raw) != stream_size:
+                    raise ValueError(
+                        f"원본 .resS raw read size 불일치: "
+                        f"read={len(original_raw)}, expected={stream_size}"
+                    )
+
+                self.original_store.ensure_original_texture_raw(
+                    game_id=request.game_id,
+                    path_id=metadata.path_id,
+                    texture_name=metadata.texture_name,
+                    raw_data=original_raw,
+                )
+
+            # 원본 raw 저장 후 실제 .resS patch 수행
             self._write_ress_bytes(
                 ress_file=ress_file,
                 offset=texture_info["stream_offset"],
@@ -172,6 +197,20 @@ class TextureRessPatcher:
             png_size=png_size,
             atlas_result=atlas_result,
         )
+
+    def _read_ress_bytes(
+            self,
+            ress_file: Path,
+            offset: int,
+            size: int,
+    ) -> bytes:
+        """
+        .resS 파일에서 원본 raw bytes를 읽는다.
+        """
+
+        with ress_file.open("rb") as f:
+            f.seek(offset)
+            return f.read(size)
 
     def save_atlas_all(self) -> None:
         """
@@ -212,10 +251,13 @@ class TextureRessPatcher:
         if target_obj is None:
             raise ValueError(f"Texture2D PathID를 찾지 못했습니다: {metadata.path_id}")
 
-        data = target_obj.read()
+        try:
+            data = target_obj.read(check_read=False)
+        except TypeError:
+            data = target_obj.read()
 
         # Texture2D name 검증.
-        unity_name = getattr(data, "m_Name", None) or getattr(data, "name", None)
+        unity_name = getattr(data, "name", None) or getattr(data, "m_Name", None)
 
         if unity_name != metadata.texture_name:
             raise ValueError(
@@ -233,10 +275,20 @@ class TextureRessPatcher:
 
         # Texture format 검증.
         texture_format = str(getattr(data, "m_TextureFormat", ""))
+        tex_format_text = str(texture_format)
 
-        if "RGBA32" not in texture_format and metadata.texture_format != "RGBA32":
+        is_rgba32 = (
+                metadata.texture_format == "RGBA32"
+                and (
+                        tex_format_text == "RGBA32"
+                        or tex_format_text == "4"
+                        or "RGBA32" in tex_format_text
+                )
+        )
+
+        if not is_rgba32:
             raise ValueError(
-                f"Texture format 불일치 또는 미지원: unity={texture_format}, metadata={metadata.texture_format}"
+                f"Texture format 불일치 또는 미지원: unity={tex_format_text}, metadata={metadata.texture_format}"
             )
 
         stream_data = getattr(data, "m_StreamData", None)

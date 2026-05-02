@@ -134,3 +134,108 @@ class OriginalStore:
             return False
 
         return any(path.is_file() for path in font_dir.iterdir())
+
+    def get_texture_original_path(
+            self,
+            game_id: str,
+            path_id: int,
+            texture_name: str,
+    ) -> Path:
+        """
+        Texture .resS 원본 raw bytes 저장 경로를 반환한다.
+        """
+
+        safe_name = self._safe_filename(texture_name)
+
+        return (
+                self.root_dir
+                / game_id
+                / "textures"
+                / f"{path_id}_{safe_name}.rgba"
+        )
+
+    def ensure_original_texture_raw(
+            self,
+            game_id: str,
+            path_id: int,
+            texture_name: str,
+            raw_data: bytes,
+    ) -> bool:
+        """
+        Texture .resS 원본 raw bytes를 최초 1회만 저장한다.
+
+        Returns:
+            새로 저장했으면 True, 이미 있으면 False
+        """
+
+        original_path = self.get_texture_original_path(
+            game_id=game_id,
+            path_id=path_id,
+            texture_name=texture_name,
+        )
+
+        if original_path.exists():
+            return False
+
+        original_path.parent.mkdir(parents=True, exist_ok=True)
+        original_path.write_bytes(raw_data)
+
+        return True
+
+    def get_atlas_original_path(
+            self,
+            game_id: str,
+            atlas_path_id: int,
+            atlas_name: str,
+    ) -> Path:
+        """
+        atlas TextAsset 원본 txt 저장 경로를 반환한다.
+        """
+
+        safe_name = self._safe_filename(atlas_name)
+
+        return (
+                self.root_dir
+                / game_id
+                / "atlas"
+                / f"{atlas_path_id}_{safe_name}.txt"
+        )
+
+    def ensure_original_atlas_text(
+            self,
+            game_id: str,
+            atlas_path_id: int,
+            atlas_name: str,
+            text: str,
+    ) -> bool:
+        """
+        atlas TextAsset 원본 txt를 최초 1회만 저장한다.
+
+        Returns:
+            새로 저장했으면 True, 이미 있으면 False
+        """
+
+        original_path = self.get_atlas_original_path(
+            game_id=game_id,
+            atlas_path_id=atlas_path_id,
+            atlas_name=atlas_name,
+        )
+
+        if original_path.exists():
+            return False
+
+        original_path.parent.mkdir(parents=True, exist_ok=True)
+        original_path.write_text(text, encoding="utf-8")
+
+        return True
+
+    @staticmethod
+    def _safe_filename(value: str) -> str:
+        """
+        파일명에 부적절한 문자를 '_'로 치환한다.
+        """
+
+        return "".join(
+            ch if ch.isalnum() or ch in ("-", "_", ".") else "_"
+            for ch in value
+        )

@@ -17,7 +17,7 @@
       "png_file": "D:/Mods/female/type_01/skeleton_17.png",
       "atlas_file": "D:/Games/SteamLibrary/steamapps/common/LongYinLiZhiZhuan/LongYinLiZhiZhuan_Data/skeleton.atlas.txt",
       "output_assets_file": null,
-      "flip_y": false
+      "flip_y": true
     }
   ]
 }

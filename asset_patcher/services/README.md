@@ -67,8 +67,19 @@ React 요청
 → PatchRequest
 → data.tsv 정확 검증
 → PNG 크기 확인
-→ 동일 크기: .resS 직접 patch
-→ 크기 변경: UnityPy Texture2D patch
+1. PNG 크기 확인
+2. PNG 크기가 data.tsv 원본 size와 같음
+   → resS patch only
+   → atlas skip
+
+3. PNG 크기가 data.tsv 원본 size와 다름
+   → atlas 정보 필요
+   → atlas_file 필요
+   → 실제 atlas 현재 page size 확인
+      - 현재 atlas size == PNG size
+        → atlas skip
+      - 현재 atlas size != PNG size
+        → 현재 atlas size 기준으로 atlas 배율 수정
 → atlas 변경 누적
 → save_atlas_all()
 ```

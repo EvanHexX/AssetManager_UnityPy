@@ -30,7 +30,11 @@ class ClothesBatchPatchService:
     여러 의상 패치 요청을 순차 처리하는 서비스.
     """
 
-    def __init__(self, texture_metadata_path: str | Path) -> None:
+    def __init__(
+            self,
+            texture_metadata_path: str | Path,
+            originals_dir: str | Path = "originals",
+    ) -> None:
         """
         ClothesBatchPatchService를 초기화한다.
 
@@ -40,6 +44,7 @@ class ClothesBatchPatchService:
 
         self.service = ClothesPatchService(
             texture_metadata_path=texture_metadata_path,
+            originals_dir=originals_dir,
         )
 
     def patch_many(
@@ -82,7 +87,7 @@ class ClothesBatchPatchService:
                     png_file=job["png_file"],
                     atlas_file=job.get("atlas_file"),
                     output_assets_file=job.get("output_assets_file"),
-                    flip_y=bool(job.get("flip_y", False)),
+                    flip_y=bool(job.get("flip_y", True)),
                     dry_run=dry_run,
                 )
 

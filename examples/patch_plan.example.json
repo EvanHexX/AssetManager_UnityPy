@@ -35,7 +35,7 @@
         "png": "D:/Games/Outputs/skeleton_17.png"
       },
       "patch": {
-        "flipY": true,
+        "flip_y": true,
         "requireSameSize": true,
         "patchRessOnly": true
       }

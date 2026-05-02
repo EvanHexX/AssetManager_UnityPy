@@ -17,6 +17,8 @@ from asset_patcher.core.texture_metadata import TextureMetadataStore
 from asset_patcher.models.patch_request import PatchRequest
 from asset_patcher.modules.texture_ress_patch import TextureRessPatcher
 from asset_patcher.modules.texture_unitypy_patch import TextureUnityPyPatcher
+from asset_patcher.modules.atlas_textasset_patch import AtlasTextAssetPatcher
+from asset_patcher.core.original_store import OriginalStore
 
 
 @dataclass
@@ -37,8 +39,9 @@ class ClothesPatchService:
     """
 
     def __init__(
-        self,
-        texture_metadata_path: str | Path,
+            self,
+            texture_metadata_path: str | Path,
+            originals_dir: str | Path = "originals",
     ) -> None:
         """
         ClothesPatchService를 초기화한다.
@@ -48,11 +51,13 @@ class ClothesPatchService:
         """
 
         self.texture_metadata_store = TextureMetadataStore(texture_metadata_path)
+        self.original_store = OriginalStore(originals_dir)
         self.atlas_manager = AtlasManager()
 
         self.ress_patcher = TextureRessPatcher(
             texture_metadata_store=self.texture_metadata_store,
             atlas_manager=self.atlas_manager,
+            original_store=self.original_store,
         )
 
         self.unitypy_patcher = TextureUnityPyPatcher(
@@ -60,15 +65,19 @@ class ClothesPatchService:
             atlas_manager=self.atlas_manager,
         )
 
+        self.atlas_textasset_patcher = AtlasTextAssetPatcher(
+            original_store=self.original_store,
+        )
+
     def patch_one(
-        self,
-        request_data: dict[str, Any],
-        assets_file: str | Path,
-        png_file: str | Path,
-        atlas_file: str | Path | None = None,
-        output_assets_file: str | Path | None = None,
-        flip_y: bool = False,
-        dry_run: bool = False,
+            self,
+            request_data: dict[str, Any],
+            assets_file: str | Path,
+            png_file: str | Path,
+            atlas_file: str | Path | None = None,
+            output_assets_file: str | Path | None = None,
+            flip_y: bool = False,
+            dry_run: bool = False,
     ) -> ClothesPatchServiceResult:
         """
         단일 의상 PNG 패치 요청을 처리한다.
@@ -99,13 +108,61 @@ class ClothesPatchService:
 
         png_size = self._read_png_size(png_file)
 
-        # ✅ 원본 크기와 같으면 container를 전혀 건드리지 않는 resS 직접 패치를 사용한다.
+        # atlas 정보가 있는 경우 → 항상 atlas 기준
+        if metadata.atlas_name is not None and metadata.atlas_path_id is not None:
+
+            atlas_result = self.atlas_textasset_patcher.patch(
+                game_id=request.game_id,
+                assets_file=assets_file,
+                atlas_path_id=metadata.atlas_path_id,
+                atlas_name=metadata.atlas_name,
+                texture_name=metadata.atlas_page_name,
+                png_file=png_file,
+                dry_run=True,
+            )
+
+            # 이미 atlas가 PNG와 일치
+            if atlas_result.status == "skip":
+                result = self.ress_patcher.patch(
+                    request=request,
+                    assets_file=assets_file,
+                    png_file=png_file,
+                    atlas_file=None,
+                    flip_y=flip_y,
+                    dry_run=dry_run,
+                )
+
+                return ClothesPatchServiceResult(
+                    status=result.status,
+                    mode="ress_patch",
+                    request=asdict(request),
+                    result=asdict(result),
+                )
+
+            # atlas 수정 필요
+            if not dry_run:
+                self.atlas_textasset_patcher.patch(
+                    game_id=request.game_id,
+                    assets_file=assets_file,
+                    atlas_path_id=metadata.atlas_path_id,
+                    atlas_name=metadata.atlas_name,
+                    texture_name=metadata.atlas_page_name,
+                    png_file=png_file,
+                    dry_run=False,
+                )
+
+            raise ValueError(
+                "PNG 크기가 현재 atlas와 다릅니다. "
+                "atlas는 수정되었지만 Texture2D 크기 변경 patch는 아직 비활성화되어 있습니다."
+            )
+
+        # atlas 없는 경우 → TSV fallback
         if png_size == metadata.size:
             result = self.ress_patcher.patch(
                 request=request,
                 assets_file=assets_file,
                 png_file=png_file,
-                atlas_file=atlas_file,
+                atlas_file=None,
                 flip_y=flip_y,
                 dry_run=dry_run,
             )
@@ -117,21 +174,8 @@ class ClothesPatchService:
                 result=asdict(result),
             )
 
-        # ✅ 크기가 다르면 atlas 좌표도 바뀌므로 UnityPy 최소 수정 모드를 사용한다.
-        result = self.unitypy_patcher.patch(
-            request=request,
-            assets_file=assets_file,
-            png_file=png_file,
-            output_file=output_assets_file,
-            atlas_file=atlas_file,
-            dry_run=dry_run,
-        )
-
-        return ClothesPatchServiceResult(
-            status=result.status,
-            mode="unitypy_texture_patch",
-            request=asdict(request),
-            result=asdict(result),
+        raise ValueError(
+            "PNG 크기가 원본과 다르고 atlas 정보도 없어 처리 불가"
         )
 
     def save_atlas_all(self) -> None:

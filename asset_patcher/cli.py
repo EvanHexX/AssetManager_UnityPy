@@ -147,8 +147,12 @@ def run_clothes_plan(plan: dict[str, Any], plan_dir: Path) -> dict[str, Any]:
 
     jobs = normalize_clothes_jobs(plan, plan_dir)
 
+    originals_dir = plan.get("originals_dir", "./originals")
+    originals_dir = resolve_path(plan_dir, originals_dir)
+
     service = ClothesBatchPatchService(
         texture_metadata_path=texture_metadata_path,
+        originals_dir=originals_dir,
     )
 
     result = service.patch_many(

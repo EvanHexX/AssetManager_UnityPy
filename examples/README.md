@@ -96,3 +96,25 @@ python -m asset_patcher.cli `
   --plan .\examples\font_restore.example.json `
   --report .\reports\font_restore_report.json
 ```
+$pyCode = @'                                                                                                                                                                          
+>> from PIL import Image                                                                                                                                                                                                                  
+>>                                                                                                                                                                                                                                        
+>> png = r"D:/Games/SRPG/용윤입지전 자료/exported_data/girls/Texture2D/skeleton_17.png"                                                                                                                                                   
+>>                                                                                                                                                                                                                                        
+>> with Image.open(png) as img:                                                                                                                                                                                                           
+>>     print(img.size)                                                                                                                                                                                                                    
+>> '@                                                                                                                                                                                                                                     
+ $pyCode | python - 
+> 
+$path = "D:\Temp\skeleton_17.png"
+
+$pyCode = @"
+from PIL import Image
+
+png = r"$path"
+
+with Image.open(png) as img:
+    print(img.size)
+"@
+
+$pyCode | python -
