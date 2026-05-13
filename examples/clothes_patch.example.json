@@ -1,5 +1,5 @@
 {
-  "kind": "clothes",
+  "kind": "texture",
   "dry_run": true,
   "stop_on_error": true,
   "texture_metadata_path": "../metadata/data.tsv",
@@ -7,7 +7,7 @@
     {
       "request": {
         "game_id": "LongYinLiZhiZhuan",
-        "category": "clothes",
+        "category": "outfit",
         "option1": "female",
         "option2": "천산파",
         "texture_name": "skeleton_17",

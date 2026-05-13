@@ -182,6 +182,57 @@ class OriginalStore:
 
         return True
 
+    def get_ui_texture_original_path(
+            self,
+            game_id: str,
+            path_id: int,
+            texture_name: str,
+            extension: str,
+    ) -> Path:
+        """
+        UI Texture .resS 원본 bytes 저장 경로를 반환한다.
+        """
+
+        safe_name = self._safe_filename(texture_name)
+        safe_extension = self._safe_filename(extension).lstrip(".") or "bin"
+
+        return (
+                self.root_dir
+                / game_id
+                / "ui_textures"
+                / f"{path_id}_{safe_name}.{safe_extension}"
+        )
+
+    def ensure_original_ui_texture_raw(
+            self,
+            game_id: str,
+            path_id: int,
+            texture_name: str,
+            raw_data: bytes,
+            extension: str = "bin",
+    ) -> bool:
+        """
+        UI Texture .resS 원본 bytes를 최초 1회만 저장한다.
+
+        Returns:
+            새로 저장했으면 True, 이미 있으면 False
+        """
+
+        original_path = self.get_ui_texture_original_path(
+            game_id=game_id,
+            path_id=path_id,
+            texture_name=texture_name,
+            extension=extension,
+        )
+
+        if original_path.exists():
+            return False
+
+        original_path.parent.mkdir(parents=True, exist_ok=True)
+        original_path.write_bytes(raw_data)
+
+        return True
+
     def get_atlas_original_path(
             self,
             game_id: str,

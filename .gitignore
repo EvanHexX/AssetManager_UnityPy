@@ -204,6 +204,9 @@ cython_debug/
 # Temporary file for partial code execution
 tempCodeRunnerFile.py
 
+# Local game patch test inputs
+test_inputs/
+
 # Ruff stuff:
 .ruff_cache/
 

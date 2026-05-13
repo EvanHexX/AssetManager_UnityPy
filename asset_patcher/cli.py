@@ -12,10 +12,21 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from asset_patcher.core.font_display_metadata import FontDisplayMetadataStore
 from asset_patcher.core.font_metadata import FontMetadataStore
 from asset_patcher.core.original_store import OriginalStore
 from asset_patcher.modules.font_patch import FontPatcher
 from asset_patcher.services.clothes_batch_service import ClothesBatchPatchService
+
+
+def configure_stdio() -> None:
+    """
+    Windows 콘솔 기본 인코딩 때문에 JSON 출력이 실패하지 않도록 UTF-8로 고정한다.
+    """
+
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
 
 
 def load_json(path: str | Path) -> dict[str, Any]:
@@ -200,6 +211,34 @@ def build_font_patcher(plan: dict[str, Any], plan_dir: Path) -> FontPatcher:
     )
 
 
+def build_font_display_store(
+    plan: dict[str, Any],
+    plan_dir: Path,
+) -> FontDisplayMetadataStore | None:
+    """
+    Font preview metadata store를 생성한다.
+    """
+
+    metadata_path = plan.get("font_display_metadata_path")
+
+    if metadata_path:
+        return FontDisplayMetadataStore(resolve_path(plan_dir, metadata_path))
+
+    font_metadata_path = plan.get("font_metadata_path")
+
+    if font_metadata_path:
+        metadata_sibling = Path(resolve_path(plan_dir, font_metadata_path)).parent
+        return FontDisplayMetadataStore(metadata_sibling / "font_display_info.json")
+
+    for parent in (plan_dir, *plan_dir.parents):
+        candidate = parent / "metadata" / "font_display_info.json"
+
+        if candidate.exists():
+            return FontDisplayMetadataStore(candidate)
+
+    return None
+
+
 def run_font_extract_plan(plan: dict[str, Any], plan_dir: Path) -> dict[str, Any]:
     """
     resources.assets에서 원본 Font 데이터를 추출한다.
@@ -240,6 +279,45 @@ def run_font_extract_plan(plan: dict[str, Any], plan_dir: Path) -> dict[str, Any
     }
 
 
+def run_font_list_plan(plan: dict[str, Any], plan_dir: Path) -> dict[str, Any]:
+    """
+    resources.assets에 현재 들어 있는 Font의 PathID와 추출 파일명만 출력한다.
+
+    Args:
+        plan: patch plan dict
+        plan_dir: plan 기준 폴더
+
+    Returns:
+        실행 결과 dict
+    """
+
+    assets_file = plan.get("assets_file")
+
+    if not assets_file:
+        raise ValueError("font_list plan에는 assets_file이 필요합니다.")
+
+    fonts = FontPatcher.list_current_fonts(
+        assets_file=resolve_path(plan_dir, assets_file),
+    )
+
+    display_store = build_font_display_store(plan, plan_dir)
+
+    if display_store is not None:
+        display_store.sync_from_font_list(
+            fonts=fonts,
+            game_id=plan.get("game_id"),
+            preview_font_dir=plan.get("preview_font_dir"),
+        )
+
+    return {
+        "kind": "font_list",
+        "status": "success",
+        "assets_file": resolve_path(plan_dir, assets_file),
+        "count": len(fonts),
+        "fonts": fonts,
+    }
+
+
 def run_font_patch_plan(plan: dict[str, Any], plan_dir: Path) -> dict[str, Any]:
     """
     resources.assets 내부 Font 데이터를 교체한다.
@@ -268,6 +346,7 @@ def run_font_patch_plan(plan: dict[str, Any], plan_dir: Path) -> dict[str, Any]:
         raise ValueError("font plan에는 jobs 배열이 필요합니다.")
 
     patcher = build_font_patcher(plan, plan_dir)
+    display_store = build_font_display_store(plan, plan_dir)
 
     results: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
@@ -312,6 +391,14 @@ def run_font_patch_plan(plan: dict[str, Any], plan_dir: Path) -> dict[str, Any]:
                     "result": asdict(result),
                 }
             )
+
+            if display_store is not None and not dry_run:
+                display_store.update_font_file(
+                    path_id=result.path_id,
+                    font_file_name=Path(result.replacement_file).name,
+                    game_id=game_id,
+                    preview_font_dir=plan.get("preview_font_dir"),
+                )
 
         except Exception as exc:
             errors.append(
@@ -418,6 +505,92 @@ def run_font_restore_plan(plan: dict[str, Any], plan_dir: Path) -> dict[str, Any
     }
 
 
+def run_ui_texture_plan(plan: dict[str, Any], plan_dir: Path) -> dict[str, Any]:
+    """
+    UI Texture2D DXT5 .resS 직접 patch plan을 실행한다.
+    """
+
+    game_id = plan.get("game_id")
+    data_dir = plan.get("data_dir")
+    jobs = plan.get("jobs")
+    metadata_path = plan.get("ui_texture_metadata_path")
+    dry_run = bool(plan.get("dry_run", False))
+    stop_on_error = bool(plan.get("stop_on_error", True))
+
+    if not game_id:
+        raise ValueError("ui_texture plan에는 game_id가 필요합니다.")
+
+    if not data_dir:
+        raise ValueError("ui_texture plan에는 data_dir가 필요합니다.")
+
+    if not metadata_path:
+        raise ValueError("ui_texture plan에는 ui_texture_metadata_path가 필요합니다.")
+
+    if not isinstance(jobs, list):
+        raise ValueError("ui_texture plan에는 jobs 배열이 필요합니다.")
+
+    from asset_patcher.core.ui_texture_metadata import UiTextureMetadataStore
+    from asset_patcher.modules.ui_texture_ress_patch import UiTextureRessPatcher
+
+    originals_dir = plan.get("originals_dir", "./originals")
+    patcher = UiTextureRessPatcher(
+        metadata_store=UiTextureMetadataStore(resolve_path(plan_dir, metadata_path)),
+        original_store=OriginalStore(resolve_path(plan_dir, originals_dir)),
+    )
+
+    results: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+
+    for index, job in enumerate(jobs):
+        try:
+            png_file = job.get("png_file")
+
+            if not png_file:
+                raise ValueError(f"ui_texture job[{index}]에 png_file이 없습니다.")
+
+            result = patcher.patch(
+                game_id=game_id,
+                data_dir=resolve_path(plan_dir, data_dir),
+                png_file=resolve_path(plan_dir, png_file),
+                path_id=job.get("path_id"),
+                texture_name=job.get("texture_name"),
+                dry_run=dry_run,
+                flip_y=job.get("flip_y"),
+            )
+
+            results.append(
+                {
+                    "index": index,
+                    "status": result.status,
+                    "result": asdict(result),
+                }
+            )
+
+        except Exception as exc:
+            errors.append(
+                {
+                    "index": index,
+                    "job": job,
+                    "error_type": type(exc).__name__,
+                    "message": str(exc),
+                }
+            )
+
+            if stop_on_error:
+                break
+
+    return {
+        "kind": "ui_texture",
+        "status": "success" if not errors else "failed",
+        "dry_run": dry_run,
+        "stop_on_error": stop_on_error,
+        "success_count": len(results),
+        "failed_count": len(errors),
+        "results": results,
+        "errors": errors,
+    }
+
+
 def run_plan(plan_path: str | Path) -> dict[str, Any]:
     """
     patch_plan.json을 실행한다.
@@ -435,17 +608,23 @@ def run_plan(plan_path: str | Path) -> dict[str, Any]:
     plan = load_json(plan_path)
     kind = plan.get("kind", "clothes")
 
-    if kind == "clothes":
+    if kind in ("clothes", "texture"):
         return run_clothes_plan(plan, plan_dir)
 
     if kind == "font_extract":
         return run_font_extract_plan(plan, plan_dir)
+
+    if kind == "font_list":
+        return run_font_list_plan(plan, plan_dir)
 
     if kind == "font":
         return run_font_patch_plan(plan, plan_dir)
 
     if kind == "font_restore":
         return run_font_restore_plan(plan, plan_dir)
+
+    if kind == "ui_texture":
+        return run_ui_texture_plan(plan, plan_dir)
 
     raise ValueError(f"지원하지 않는 plan kind입니다: {kind}")
 
@@ -465,7 +644,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument(
         "--plan",
-        required=True,
+        required=False,
         help="patch_plan.json 경로",
     )
 
@@ -473,6 +652,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--report",
         default=None,
         help="patch 결과 report JSON 저장 경로",
+    )
+
+    parser.add_argument(
+        "-ui",
+        "--ui",
+        action="store_true",
+        help="TSV 관리 UI를 실행합니다.",
     )
 
     return parser
@@ -486,10 +672,21 @@ def main() -> int:
         process exit code
     """
 
+    configure_stdio()
+
     parser = build_parser()
     args = parser.parse_args()
 
     try:
+        if args.ui:
+            from asset_patcher.ui.tsv_editor import run_tsv_editor
+
+            run_tsv_editor()
+            return 0
+
+        if not args.plan:
+            raise ValueError("--plan 또는 -ui 중 하나가 필요합니다.")
+
         result = run_plan(args.plan)
 
         print(json.dumps(result, ensure_ascii=False, indent=2))

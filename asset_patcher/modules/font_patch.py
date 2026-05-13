@@ -167,10 +167,16 @@ class FontPatcher:
             )
 
         if not dry_run:
-            output_file.parent.mkdir(parents=True, exist_ok=True)
-
-            with output_file.open("wb") as f:
-                f.write(env.file.save())
+            saved_bytes = env.file.save()
+            self._write_validated_assets(
+                assets_file=assets_file,
+                output_file=output_file,
+                saved_bytes=saved_bytes,
+                old_data_size=len(font_ref.data),
+                new_data_size=len(replacement_bytes),
+                expected_object_count=len(env.objects),
+                target_path_id=metadata.path_id,
+            )
 
         return FontPatchResult(
             status="dry_run" if dry_run else "success",
@@ -185,6 +191,94 @@ class FontPatcher:
             old_data_size=len(font_ref.data),
             new_data_size=len(replacement_bytes),
         )
+
+    @staticmethod
+    def _write_validated_assets(
+        assets_file: Path,
+        output_file: Path,
+        saved_bytes: bytes,
+        old_data_size: int,
+        new_data_size: int,
+        expected_object_count: int,
+        target_path_id: int,
+    ) -> None:
+        original_size = assets_file.stat().st_size
+        expected_size = original_size - old_data_size + new_data_size
+        size_delta = abs(len(saved_bytes) - expected_size)
+        size_tolerance = max(16 * 1024 * 1024, int(original_size * 0.05))
+
+        if size_delta > size_tolerance:
+            raise ValueError(
+                "Font 패치 저장 결과 크기가 예상 범위를 벗어났습니다. "
+                f"original_size={original_size}, old_font_size={old_data_size}, "
+                f"new_font_size={new_data_size}, expected_assets_size={expected_size}, "
+                f"saved_assets_size={len(saved_bytes)}"
+            )
+
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        temp_file = output_file.with_name(f"{output_file.name}.asset_patcher.tmp")
+        keep_temp_file = False
+
+        try:
+            temp_file.write_bytes(saved_bytes)
+            saved_env = UnityPy.load(saved_bytes)
+
+            if len(saved_env.objects) != expected_object_count:
+                raise ValueError(
+                    "Font 패치 저장 후 object 개수가 변경되었습니다. "
+                    f"before={expected_object_count}, after={len(saved_env.objects)}"
+                )
+
+            saved_obj = FontPatcher._find_object_by_path_id(saved_env, target_path_id)
+
+            if saved_obj is None:
+                raise ValueError(
+                    f"Font 패치 저장 후 PathID를 찾지 못했습니다: {target_path_id}"
+                )
+
+            saved_font_ref = FontPatcher._get_font_data_ref(saved_obj.read())
+
+            if len(saved_font_ref.data) != new_data_size:
+                raise ValueError(
+                    "Font 패치 저장 후 대상 Font data 크기가 일치하지 않습니다. "
+                    f"expected={new_data_size}, actual={len(saved_font_ref.data)}"
+                )
+
+            try:
+                temp_file.replace(output_file)
+            except PermissionError as exc:
+                try:
+                    output_file.write_bytes(saved_bytes)
+                    written_env = UnityPy.load(str(output_file))
+                    written_obj = FontPatcher._find_object_by_path_id(
+                        written_env,
+                        target_path_id,
+                    )
+
+                    if written_obj is None:
+                        raise ValueError(
+                            "직접 overwrite 후 PathID를 찾지 못했습니다: "
+                            f"{target_path_id}"
+                        )
+
+                    written_font_ref = FontPatcher._get_font_data_ref(written_obj.read())
+
+                    if len(written_font_ref.data) != new_data_size:
+                        raise ValueError(
+                            "직접 overwrite 후 대상 Font data 크기가 일치하지 않습니다. "
+                            f"expected={new_data_size}, "
+                            f"actual={len(written_font_ref.data)}"
+                        )
+                except Exception as overwrite_exc:
+                    keep_temp_file = True
+                    raise PermissionError(
+                        "검증된 패치 파일을 최종 resources.assets로 교체하지 못했고, "
+                        "직접 overwrite도 실패했습니다. "
+                        f"patched_temp_file={temp_file}"
+                    ) from overwrite_exc
+        finally:
+            if temp_file.exists() and not keep_temp_file:
+                temp_file.unlink()
 
     def extract_originals(
         self,
@@ -267,6 +361,50 @@ class FontPatcher:
             )
 
         return results
+
+    @staticmethod
+    def list_current_fonts(assets_file: str | Path) -> list[dict[str, Any]]:
+        """
+        resources.assets에 현재 들어 있는 Font 객체의 PathID와 추출 파일명만 반환한다.
+        """
+
+        assets_file = Path(assets_file)
+
+        if not assets_file.exists():
+            raise FileNotFoundError(f"resources.assets 파일이 없습니다: {assets_file}")
+
+        env = UnityPy.load(str(assets_file))
+        results: list[dict[str, Any]] = []
+
+        for obj in env.objects:
+            type_name = getattr(getattr(obj, "type", None), "name", None)
+
+            if type_name != "Font":
+                continue
+
+            path_id = getattr(obj, "path_id", None)
+
+            if path_id is None:
+                continue
+
+            data = obj.read()
+            font_name = (
+                getattr(data, "m_Name", None)
+                or getattr(data, "name", None)
+                or f"Font_{path_id}"
+            )
+
+            results.append(
+                {
+                    "path_id": int(path_id),
+                    "font_file_name": FontPatcher._build_original_font_filename(
+                        path_id=int(path_id),
+                        font_name=str(font_name),
+                    ),
+                }
+            )
+
+        return sorted(results, key=lambda item: item["path_id"])
 
     def restore_by_path_id(
         self,
